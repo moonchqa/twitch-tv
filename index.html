@@ -39,7 +39,7 @@
   #list-main { flex: 1; padding: 72px 64px; overflow: hidden; }
   #channels { list-style: none; }
   .ch {
-    display: flex; align-items: center; height: 148px; margin-bottom: 18px;
+    cursor: pointer; display: flex; align-items: center; height: 148px; margin-bottom: 18px;
     border-radius: 14px; background: var(--panel); padding-right: 16px;
     border: 4px solid transparent;
   }
@@ -101,6 +101,10 @@
   .msg.action .t { font-style: italic; }
   .msg img.e { height: 36px; width: auto; vertical-align: middle; margin: -6px 1px 0; }
   .msg.sys { color: var(--muted); font-size: 22px; }
+  #back-btn {
+    position: absolute; right: 32px; top: 24px; padding: 10px 20px; border-radius: 10px;
+    background: rgba(20,16,31,0.82); color: var(--text); font-size: 26px; cursor: pointer;
+  }
   #diag {
     position: absolute; left: 32px; bottom: 24px; max-width: 1100px; padding: 14px 20px;
     border-radius: 10px; background: rgba(20,16,31,0.88); color: var(--muted); font-size: 22px;
@@ -115,6 +119,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
+    <p style="font-size:18px;margin-top:8px">версія 3</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -138,6 +143,7 @@
   <div id="player">
     <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
     <div id="player-title"></div>
+    <div id="back-btn">◄ До списку</div>
     <div id="diag" hidden></div>
   </div>
   <div id="chat">
@@ -153,7 +159,7 @@
 var CONFIG = {
   // Канали за замовчуванням. Додані з телевізора зберігаються окремо
   // в пам'яті браузера і дописуються до цього списку.
-  channels: ['twitch', 'esl_csgo'],
+  channels: ['lirik'],
   // Сторонні емодзі. Вимкни будь-який, якщо не потрібен.
   providers: { seventv: true, bttv: true, ffz: true },
   // Скільки останніх повідомлень тримати в чаті (більше = повільніше на TV).
@@ -166,6 +172,13 @@ var CONFIG = {
    Утиліти
    ==================================================================== */
 var $ = function (id) { return document.getElementById(id); };
+if (!Element.prototype.closest) {
+  Element.prototype.closest = function (sel) {
+    var el = this;
+    while (el && el.nodeType === 1) { if (el.matches ? el.matches(sel) : el.msMatchesSelector(sel)) return el; el = el.parentNode; }
+    return null;
+  };
+}
 var Diag = {
   set: function (text, err) { var d = $('diag'); d.hidden = !text; d.textContent = text || ''; d.classList.toggle('err', !!err); },
   timer: null
@@ -550,6 +563,30 @@ var Chat = {
 /* ====================================================================
    Клавіші пульта
    ==================================================================== */
+// Миша / курсор телевізора
+document.addEventListener('click', function (ev) {
+  if (!$('screen-player').hidden) {
+    if (ev.target.closest('#chat')) return;
+    if (ev.target.closest('#diag') || ev.target.closest('#player-title') || ev.target.closest('#back-btn')) { Player.close(); }
+    return;
+  }
+  var del = ev.target.closest('.del');
+  var card = ev.target.closest('.ch');
+  if (del && card) { List.remove(card.dataset.name); return; }
+  if (card) { Player.open(card.dataset.name); return; }
+  if (ev.target.closest('#add-row')) {
+    List.idx = List.items.length - 1; List.onDel = false; List.paint();
+  }
+});
+document.addEventListener('mouseover', function (ev) {
+  if (!$('screen-player').hidden) return;
+  var card = ev.target.closest('.ch');
+  if (!card) return;
+  var i = List.items.indexOf(card);
+  if (i !== -1 && (i !== List.idx || List.onDel !== !!ev.target.closest('.del'))) {
+    List.idx = i; List.onDel = !!ev.target.closest('.del'); List.paint();
+  }
+});
 document.addEventListener('keydown', function (ev) {
   var code = ev.keyCode;
   var handled = $('screen-player').hidden ? List.key(code) : Player.key(code);
