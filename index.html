@@ -120,7 +120,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
-    <p id="ver" style="font-size:28px;margin-top:12px;color:var(--focus);font-weight:600">версія 7</p>
+    <p id="ver" style="font-size:28px;margin-top:12px;color:var(--focus);font-weight:600">версія 8</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -402,7 +402,34 @@ var Direct = {
       if (m3u8.indexOf('#EXTM3U') !== 0) throw new Error('потік не схожий на m3u8');
       Direct.playHls(url, v);
     }).catch(function (e) {
-      Diag.set('Відео: не можу завантажити потік (' + e.message + '). Якщо стоїть AdGuard DNS — можливо, він ріже usher.ttvnw.net. OK — назад.', true);
+      Diag.set('Відео: звичайний запит не вдався (' + e.message + '). Роблю діагностику…', true);
+      Direct.diagnose(url, e.message);
+    });
+  },
+
+  // Розрізняє «заборонив браузер (CORS)» і «мережа/сертифікат»
+  diagnose: function (url, firstErr) {
+    var out = [];
+    var done = function () { Diag.set('Діагностика (зроби фото екрана):\n' + out.join('\n') + '\nOK — назад.', true); };
+    var step3 = function () {
+      // 3) XHR
+      try {
+        var x = new XMLHttpRequest(); x.open('GET', url, true);
+        x.onload = function () { out.push('XHR: відповідь ' + x.status + (x.responseText && x.responseText.indexOf('#EXTM3U') === 0 ? ' (m3u8 є)' : '')); done(); };
+        x.onerror = function () { out.push('XHR: помилка'); done(); };
+        x.send();
+      } catch (er) { out.push('XHR: ' + er.message); done(); }
+    };
+    // 2) no-cors: якщо проходить — з мережею все гаразд, ріже саме CORS
+    fetch(url, { mode: 'no-cors' }).then(function () {
+      out.push('no-cors запит: ПРОЙШОВ → мережа і сертифікат ок, проблема в CORS');
+      step3();
+    }).catch(function (e2) {
+      out.push('no-cors запит: ПРОВАЛИВСЯ (' + e2.message + ') → мережа/сертифікат/блокування');
+      // 2b) контроль: чи взагалі доходить до іншого сервера Twitch
+      fetch('https://gql.twitch.tv/gql', { method: 'POST', mode: 'no-cors', body: '[]' }).then(function () {
+        out.push('gql.twitch.tv: доступний');
+      }).catch(function (e3) { out.push('gql.twitch.tv: недоступний (' + e3.message + ')'); }).then(step3);
     });
   },
 
