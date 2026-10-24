@@ -73,6 +73,7 @@
   /* ---------- Player screen ---------- */
   #screen-player { display: flex; height: 100%; background: #000; }
   #player { flex: 1; position: relative; background: #000; }
+  #player video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
   #player iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
   #player-title {
     position: absolute; left: 32px; top: 24px; padding: 10px 20px; border-radius: 10px;
@@ -119,7 +120,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
-    <p style="font-size:18px;margin-top:8px">версія 3</p>
+    <p style="font-size:18px;margin-top:8px">версія 4</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -141,7 +142,8 @@
 <!-- ============ Player ============ -->
 <div id="screen-player" hidden>
   <div id="player">
-    <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
+    <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen hidden></iframe>
+    <video id="player-video" autoplay playsinline hidden></video>
     <div id="player-title"></div>
     <div id="back-btn">◄ До списку</div>
     <div id="diag" hidden></div>
@@ -165,7 +167,10 @@ var CONFIG = {
   // Скільки останніх повідомлень тримати в чаті (більше = повільніше на TV).
   maxMessages: 60,
   // Якість картинок емодзі: 1 або 2 (2 = чіткіше, трохи важче).
-  emoteScale: 2
+  emoteScale: 2,
+  // Як грати відео: 'direct' — брати потік і грати рідним плеєром (для старих TV),
+  // 'embed' — вбудований плеєр Twitch (не працює на Tizen 5).
+  playerMode: 'direct'
 };
 
 /* ====================================================================
@@ -312,25 +317,24 @@ var Player = {
     List.hide();
     $('screen-player').hidden = false;
     $('chat').classList.remove('hidden');
-    var parent = location.hostname || 'localhost';
-    $('player-frame').src = 'https://player.twitch.tv/?channel=' + encodeURIComponent(name) +
-      '&parent=' + encodeURIComponent(parent) + '&autoplay=true&muted=false';
     $('player-title').textContent = name;
     Player.flashTitle();
-    Diag.set('Плеєр: завантажую… (Enter — назад до списку)');
     clearTimeout(Diag.timer);
-    Diag.timer = setTimeout(function () {
-      Diag.set('Плеєр не відповів за 20 с — ймовірно, вбудований плеєр Twitch не працює на цьому браузері. Enter — назад.', true);
-    }, 20000);
-    $('player-frame').onload = function () {
-      clearTimeout(Diag.timer);
-      Diag.set('Плеєр: сторінка завантажилась. Якщо чорно — дивись, чи є помилка в самому плеєрі. Enter — назад.');
-      setTimeout(function () { Diag.set(''); }, 8000);
-    };
+    if (CONFIG.playerMode === 'embed') Player.openEmbed(name); else Direct.open(name);
     Chat.connect(name);
+  },
+  openEmbed: function (name) {
+    var f = $('player-frame'); f.hidden = false; $('player-video').hidden = true;
+    var parent = location.hostname || 'localhost';
+    f.src = 'https://player.twitch.tv/?channel=' + encodeURIComponent(name) +
+      '&parent=' + encodeURIComponent(parent) + '&autoplay=true&muted=false';
+    Diag.set('Плеєр Twitch: завантажую…');
+    Diag.timer = setTimeout(function () { Diag.set('Вбудований плеєр не відповів за 20 с.', true); }, 20000);
+    f.onload = function () { clearTimeout(Diag.timer); Diag.set(''); };
   },
   close: function () {
     clearTimeout(Diag.timer); Diag.set('');
+    Direct.stop();
     $('player-frame').onload = null;
     $('player-frame').src = 'about:blank';
     Chat.disconnect();
@@ -342,10 +346,86 @@ var Player = {
     Player.titleTimer = setTimeout(function () { t.classList.remove('show'); }, 2500);
   },
   key: function (code) {
-    if (code === KEY.BACK || code === KEY.ESC || code === KEY.ENTER) { Player.close(); return true; }
+    if (code === KEY.ENTER) {
+      var v = $('player-video');
+      if (!v.hidden && v.paused && v.src) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); Diag.set(''); return true; }
+      Player.close(); return true;
+    }
+    if (code === KEY.BACK || code === KEY.ESC) { Player.close(); return true; }
     if (code === KEY.LEFT || code === KEY.RIGHT) { $('chat').classList.toggle('hidden'); Player.flashTitle(); return true; }
     if (code === KEY.UP || code === KEY.DOWN) { Player.flashTitle(); return true; }
     return false;
+  }
+};
+
+/* ====================================================================
+   Прямий плеєр: токен через GQL → m3u8 → <video> (рідний HLS) або hls.js
+   ==================================================================== */
+var Direct = {
+  CID: 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+  HASH: '0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712',
+  hls: null,
+
+  open: function (name) {
+    var v = $('player-video'); v.hidden = false; $('player-frame').hidden = true;
+    Diag.set('Відео: отримую потік…');
+    fetch('https://gql.twitch.tv/gql', {
+      method: 'POST',
+      headers: { 'Client-ID': Direct.CID, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operationName: 'PlaybackAccessToken',
+        variables: { isLive: true, login: name, isVod: false, vodID: '', playerType: 'embed' },
+        extensions: { persistedQuery: { version: 1, sha256Hash: Direct.HASH } }
+      })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      var t = d && d.data && d.data.streamPlaybackAccessToken;
+      if (!t) throw new Error('канал офлайн або Twitch не видав токен');
+      var url = 'https://usher.ttvnw.net/api/channel/hls/' + encodeURIComponent(name) + '.m3u8' +
+        '?client_id=' + Direct.CID + '&token=' + encodeURIComponent(t.value) + '&sig=' + encodeURIComponent(t.signature) +
+        '&allow_source=true&allow_audio_only=false&fast_bread=true&p=' + Math.floor(Math.random() * 1e7);
+      Direct.play(url);
+    }).catch(function (e) {
+      Diag.set('Відео: ' + (e && e.message ? e.message : e) + '. OK — назад.', true);
+    });
+  },
+
+  play: function (url) {
+    var v = $('player-video');
+    v.onerror = function () {
+      var c = v.error ? v.error.code : '?';
+      Diag.set('Відео: помилка плеєра (код ' + c + '). OK — назад.', true);
+    };
+    v.onplaying = function () { Diag.set(''); };
+    v.onwaiting = function () { Diag.set('Відео: буферизація…'); };
+    if (v.canPlayType('application/vnd.apple.mpegurl') || v.canPlayType('application/x-mpegURL')) {
+      Diag.set('Відео: запускаю (рідний HLS)…');
+      v.src = url;
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function (e) { Diag.set('Відео: автозапуск заблоковано — натисни OK на плеєрі.', true); });
+    } else {
+      Diag.set('Відео: запускаю через hls.js…');
+      Direct.loadHls(function (ok) {
+        if (!ok || !window.Hls || !Hls.isSupported()) { Diag.set('Відео: цей браузер не вміє HLS (ні рідно, ні через hls.js).', true); return; }
+        Direct.hls = new Hls({ enableWorker: false, lowLatencyMode: false });
+        Direct.hls.on(Hls.Events.ERROR, function (ev, data) { if (data.fatal) Diag.set('Відео: hls.js ' + data.type + ' / ' + data.details, true); });
+        Direct.hls.loadSource(url); Direct.hls.attachMedia(v);
+        Direct.hls.on(Hls.Events.MANIFEST_PARSED, function () { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); });
+      });
+    }
+  },
+
+  loadHls: function (cb) {
+    if (window.Hls) return cb(true);
+    var sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js';
+    sc.onload = function () { cb(true); }; sc.onerror = function () { cb(false); };
+    document.head.appendChild(sc);
+  },
+
+  stop: function () {
+    var v = $('player-video');
+    if (Direct.hls) { try { Direct.hls.destroy(); } catch (e) {} Direct.hls = null; }
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    v.hidden = true;
   }
 };
 
