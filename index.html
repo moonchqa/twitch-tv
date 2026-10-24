@@ -73,7 +73,7 @@
   /* ---------- Player screen ---------- */
   #screen-player { display: flex; height: 100%; background: #000; }
   #player { flex: 1; position: relative; background: #000; }
-  #player video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+  #player video, #player object { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
   #player iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
   #player-title {
     position: absolute; left: 32px; top: 24px; padding: 10px 20px; border-radius: 10px;
@@ -120,7 +120,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
-    <p id="ver" style="font-size:28px;margin-top:12px;color:var(--focus);font-weight:600">версія 8</p>
+    <p id="ver" style="font-size:28px;margin-top:12px;color:var(--focus);font-weight:600">версія 9</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -144,6 +144,7 @@
   <div id="player">
     <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen hidden></iframe>
     <video id="player-video" autoplay playsinline hidden></video>
+    <object id="player-av" type="application/avplayer" hidden></object>
     <div id="player-title"></div>
     <div id="back-btn">◄ До списку</div>
     <div id="diag" hidden></div>
@@ -154,6 +155,7 @@
   </div>
 </div>
 
+<script src="$WEBAPIS/webapis/webapis.js"></script>
 <script>
 /* ====================================================================
    Налаштування — тут можна міняти без розуміння решти коду
@@ -352,7 +354,7 @@ var Player = {
       Player.close(); return true;
     }
     if (code === KEY.BACK || code === KEY.ESC) { Player.close(); return true; }
-    if (code === KEY.LEFT || code === KEY.RIGHT) { $('chat').classList.toggle('hidden'); Player.flashTitle(); return true; }
+    if (code === KEY.LEFT || code === KEY.RIGHT) { $('chat').classList.toggle('hidden'); Direct.resize(); Player.flashTitle(); return true; }
     if (code === KEY.UP || code === KEY.DOWN) { Player.flashTitle(); return true; }
     return false;
   }
@@ -389,48 +391,63 @@ var Direct = {
     });
   },
 
+  // Порядок спроб: AVPlay (застосунок Tizen) → рідний HLS у <video> → hls.js.
+  // Чому не fetch/hls.js одразу: usher.ttvnw.net і playlist.ttvnw.net пускають
+  // запити тільки з Origin twitch.tv (з github.io — CORS-блок / 403). Рідний плеєр
+  // і AVPlay заголовок Origin не шлють, тому їм усе віддається.
   play: function (url) {
     var v = $('player-video');
     v.onplaying = function () { Diag.set(''); };
     v.onwaiting = function () { Diag.set('Відео: буферизація…'); };
-    // 1) перевіряємо, що адреса потоку взагалі доступна з телевізора
-    Diag.set('Відео: перевіряю потік…');
-    fetch(url).then(function (r) {
-      if (!r.ok) throw new Error('усher відповів ' + r.status);
-      return r.text();
-    }).then(function (m3u8) {
-      if (m3u8.indexOf('#EXTM3U') !== 0) throw new Error('потік не схожий на m3u8');
-      Direct.playHls(url, v);
-    }).catch(function (e) {
-      Diag.set('Відео: звичайний запит не вдався (' + e.message + '). Роблю діагностику…', true);
-      Direct.diagnose(url, e.message);
-    });
+    if (window.webapis && webapis.avplay) return Direct.playAvplay(url);
+    Direct.playNative(url, v);
   },
 
-  // Розрізняє «заборонив браузер (CORS)» і «мережа/сертифікат»
-  diagnose: function (url, firstErr) {
-    var out = [];
-    var done = function () { Diag.set('Діагностика (зроби фото екрана):\n' + out.join('\n') + '\nOK — назад.', true); };
-    var step3 = function () {
-      // 3) XHR
-      try {
-        var x = new XMLHttpRequest(); x.open('GET', url, true);
-        x.onload = function () { out.push('XHR: відповідь ' + x.status + (x.responseText && x.responseText.indexOf('#EXTM3U') === 0 ? ' (m3u8 є)' : '')); done(); };
-        x.onerror = function () { out.push('XHR: помилка'); done(); };
-        x.send();
-      } catch (er) { out.push('XHR: ' + er.message); done(); }
+  playNative: function (url, v) {
+    Diag.set('Відео: запускаю рідним плеєром TV…');
+    var settled = false;
+    var fail = function (why) {
+      if (settled) return; settled = true; clearTimeout(Direct.nativeTimer);
+      v.onerror = null; v.onloadedmetadata = null;
+      try { v.removeAttribute('src'); v.load(); } catch (e) {}
+      Diag.set('Відео: рідний плеєр не зміг (' + why + '). Пробую hls.js…', true);
+      Direct.playHls(url, v);
     };
-    // 2) no-cors: якщо проходить — з мережею все гаразд, ріже саме CORS
-    fetch(url, { mode: 'no-cors' }).then(function () {
-      out.push('no-cors запит: ПРОЙШОВ → мережа і сертифікат ок, проблема в CORS');
-      step3();
-    }).catch(function (e2) {
-      out.push('no-cors запит: ПРОВАЛИВСЯ (' + e2.message + ') → мережа/сертифікат/блокування');
-      // 2b) контроль: чи взагалі доходить до іншого сервера Twitch
-      fetch('https://gql.twitch.tv/gql', { method: 'POST', mode: 'no-cors', body: '[]' }).then(function () {
-        out.push('gql.twitch.tv: доступний');
-      }).catch(function (e3) { out.push('gql.twitch.tv: недоступний (' + e3.message + ')'); }).then(step3);
-    });
+    v.onloadedmetadata = function () {
+      settled = true; clearTimeout(Direct.nativeTimer);
+      var pr = v.play();
+      if (pr && pr.catch) pr.catch(function () { Diag.set('Відео готове — натисни OK, щоб запустити.', true); });
+    };
+    v.onerror = function () { fail('код ' + (v.error ? v.error.code : '?')); };
+    Direct.nativeTimer = setTimeout(function () { fail('тайм-аут 20 с'); }, 20000);
+    v.src = url;
+    try { v.load(); } catch (e) {}
+  },
+
+  // ---- AVPlay: апаратний плеєр Samsung, доступний лише у встановленому застосунку
+  playAvplay: function (url) {
+    var av = webapis.avplay;
+    $('player-video').hidden = true; $('player-av').hidden = false;
+    Diag.set('Відео: AVPlay відкриває потік…');
+    try {
+      try { av.stop(); av.close(); } catch (e) {}
+      av.open(url);
+      av.setListener({
+        onbufferingstart: function () { Diag.set('Відео: буферизація…'); },
+        onbufferingcomplete: function () { Diag.set(''); },
+        onerror: function (e) { Diag.set('AVPlay: помилка ' + e, true); },
+        onstreamcompleted: function () { Diag.set('Стрім закінчився. OK — назад.', true); }
+      });
+      Direct.resize();
+      av.prepareAsync(function () { Direct.resize(); av.play(); Diag.set(''); },
+        function (e) { Diag.set('AVPlay: не вдалось підготувати потік (' + (e && e.name || e) + ')', true); });
+    } catch (e) { Diag.set('AVPlay: ' + (e && e.message || e), true); }
+  },
+  // Прямокутник відео в координатах 1920×1080 (в застосунку масштаб = 1)
+  resize: function () {
+    if (!(window.webapis && webapis.avplay)) return;
+    var p = $('player');
+    try { webapis.avplay.setDisplayRect(p.offsetLeft, p.offsetTop, p.offsetWidth, p.offsetHeight); } catch (e) {}
   },
 
   playHls: function (url, v) {
@@ -438,6 +455,7 @@ var Direct = {
     Direct.loadHls(function (ok) {
       if (!ok || !window.Hls) { Diag.set('Відео: hls.js не завантажився (cdnjs недоступний?).', true); return; }
       if (!Hls.isSupported()) { Diag.set('Відео: браузер без MSE — hls.js не може грати.', true); return; }
+      // hls.js спрацює лише якщо Twitch пустить запит з цього сайту — з github.io зазвичай ні (403).
       Direct.hls = new Hls({
         enableWorker: false, lowLatencyMode: false,
         capLevelToPlayerSize: false, maxBufferLength: 20, backBufferLength: 10
@@ -469,6 +487,9 @@ var Direct = {
 
   stop: function () {
     var v = $('player-video');
+    clearTimeout(Direct.nativeTimer);
+    v.onerror = null; v.onloadedmetadata = null;
+    if (window.webapis && webapis.avplay) { try { webapis.avplay.stop(); webapis.avplay.close(); } catch (e) {} $('player-av').hidden = true; }
     if (Direct.hls) { try { Direct.hls.destroy(); } catch (e) {} Direct.hls = null; }
     try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
     v.hidden = true;
