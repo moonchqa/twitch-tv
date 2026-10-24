@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1920, height=1080, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Twitch + 7TV</title>
 <style>
   :root {
@@ -16,8 +16,9 @@
     --chat-w: 460px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    width: 1920px; height: 1080px; overflow: hidden;
+  html { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden; transform-origin: 0 0;
     background: var(--bg); color: var(--text);
     font-family: "Samsung Sans", "Noto Sans", "Segoe UI", Arial, sans-serif;
     font-size: 26px; line-height: 1.35;
@@ -45,7 +46,7 @@
   .ch.focus { border-color: var(--focus); background: var(--panel-2); }
   .ch .thumb {
     width: 236px; height: 132px; border-radius: 10px 0 0 10px; overflow: hidden;
-    margin: 2px 0 2px 2px; background: #000; flex: none;
+    margin: 2px 0 2px 2px; background: #2a2338; flex: none;
   }
   .ch .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ch .info { flex: 1; padding: 0 32px; }
@@ -205,6 +206,8 @@ var List = {
       var li = document.createElement('li'); li.className = 'ch'; li.dataset.name = name;
       var thumb = document.createElement('div'); thumb.className = 'thumb';
       var img = document.createElement('img'); img.alt = '';
+      img.onerror = function () { img.style.display = 'none'; };
+      img.onload = function () { img.style.display = 'block'; };
       img.src = List.thumbUrl(name); thumb.appendChild(img);
       var info = document.createElement('div'); info.className = 'info';
       var n = document.createElement('div'); n.className = 'name'; n.textContent = name;
@@ -552,6 +555,15 @@ document.addEventListener('keydown', function (ev) {
   var handled = $('screen-player').hidden ? List.key(code) : Player.key(code);
   if (handled) ev.preventDefault();
 });
+
+function fit() {
+  var sx = window.innerWidth / 1920, sy = window.innerHeight / 1080, k = Math.min(sx, sy);
+  var b = document.body;
+  b.style.transform = 'scale(' + k + ')';
+  b.style.marginLeft = Math.max(0, (window.innerWidth - 1920 * k) / 2) + 'px';
+  b.style.marginTop = Math.max(0, (window.innerHeight - 1080 * k) / 2) + 'px';
+}
+window.addEventListener('resize', fit); fit();
 
 List.show();
 </script>
