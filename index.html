@@ -120,7 +120,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
-    <p style="font-size:18px;margin-top:8px">версія 4</p>
+    <p style="font-size:18px;margin-top:8px">версія 5</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -400,7 +400,7 @@ var Direct = {
     if (v.canPlayType('application/vnd.apple.mpegurl') || v.canPlayType('application/x-mpegURL')) {
       Diag.set('Відео: запускаю (рідний HLS)…');
       v.src = url;
-      var pr = v.play(); if (pr && pr.catch) pr.catch(function (e) { Diag.set('Відео: автозапуск заблоковано — натисни OK на плеєрі.', true); });
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function (e) { Diag.set('Відео готове — натисни OK (клік) по відео, щоб запустити.', true); });
     } else {
       Diag.set('Відео: запускаю через hls.js…');
       Direct.loadHls(function (ok) {
@@ -647,7 +647,14 @@ var Chat = {
 document.addEventListener('click', function (ev) {
   if (!$('screen-player').hidden) {
     if (ev.target.closest('#chat')) return;
-    if (ev.target.closest('#diag') || ev.target.closest('#player-title') || ev.target.closest('#back-btn')) { Player.close(); }
+    if (ev.target.closest('#back-btn')) { Player.close(); return; }
+    // клік по відео: якщо стоїть на паузі (автозапуск заблоковано) — запускаємо
+    var v = $('player-video');
+    if (!v.hidden && v.src) {
+      if (v.paused) { var pr = v.play(); if (pr && pr.catch) pr.catch(function (e) { Diag.set('Відео: не вдалось запустити: ' + e.message, true); }); Diag.set('Відео: запускаю…'); }
+      return;
+    }
+    if (ev.target.closest('#diag') || ev.target.closest('#player-title')) { Player.close(); }
     return;
   }
   var del = ev.target.closest('.del');
