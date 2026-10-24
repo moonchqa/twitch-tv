@@ -120,7 +120,7 @@
 <div id="screen-list">
   <div id="list-side">
     <h1>Twitch<br>з 7TV-емодзі</h1>
-    <p style="font-size:18px;margin-top:8px">версія 5</p>
+    <p id="ver" style="font-size:28px;margin-top:12px;color:var(--focus);font-weight:600">версія 7</p>
     <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
     <div id="hint">
       <span>▲ ▼ — по списку</span>
@@ -391,26 +391,45 @@ var Direct = {
 
   play: function (url) {
     var v = $('player-video');
-    v.onerror = function () {
-      var c = v.error ? v.error.code : '?';
-      Diag.set('Відео: помилка плеєра (код ' + c + '). OK — назад.', true);
-    };
     v.onplaying = function () { Diag.set(''); };
     v.onwaiting = function () { Diag.set('Відео: буферизація…'); };
-    if (v.canPlayType('application/vnd.apple.mpegurl') || v.canPlayType('application/x-mpegURL')) {
-      Diag.set('Відео: запускаю (рідний HLS)…');
-      v.src = url;
-      var pr = v.play(); if (pr && pr.catch) pr.catch(function (e) { Diag.set('Відео готове — натисни OK (клік) по відео, щоб запустити.', true); });
-    } else {
-      Diag.set('Відео: запускаю через hls.js…');
-      Direct.loadHls(function (ok) {
-        if (!ok || !window.Hls || !Hls.isSupported()) { Diag.set('Відео: цей браузер не вміє HLS (ні рідно, ні через hls.js).', true); return; }
-        Direct.hls = new Hls({ enableWorker: false, lowLatencyMode: false });
-        Direct.hls.on(Hls.Events.ERROR, function (ev, data) { if (data.fatal) Diag.set('Відео: hls.js ' + data.type + ' / ' + data.details, true); });
-        Direct.hls.loadSource(url); Direct.hls.attachMedia(v);
-        Direct.hls.on(Hls.Events.MANIFEST_PARSED, function () { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); });
+    // 1) перевіряємо, що адреса потоку взагалі доступна з телевізора
+    Diag.set('Відео: перевіряю потік…');
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error('усher відповів ' + r.status);
+      return r.text();
+    }).then(function (m3u8) {
+      if (m3u8.indexOf('#EXTM3U') !== 0) throw new Error('потік не схожий на m3u8');
+      Direct.playHls(url, v);
+    }).catch(function (e) {
+      Diag.set('Відео: не можу завантажити потік (' + e.message + '). Якщо стоїть AdGuard DNS — можливо, він ріже usher.ttvnw.net. OK — назад.', true);
+    });
+  },
+
+  playHls: function (url, v) {
+    Diag.set('Відео: завантажую hls.js…');
+    Direct.loadHls(function (ok) {
+      if (!ok || !window.Hls) { Diag.set('Відео: hls.js не завантажився (cdnjs недоступний?).', true); return; }
+      if (!Hls.isSupported()) { Diag.set('Відео: браузер без MSE — hls.js не може грати.', true); return; }
+      Direct.hls = new Hls({
+        enableWorker: false, lowLatencyMode: false,
+        capLevelToPlayerSize: false, maxBufferLength: 20, backBufferLength: 10
       });
-    }
+      Direct.hls.on(Hls.Events.ERROR, function (ev, data) {
+        if (data.fatal) Diag.set('Відео: hls.js ' + data.type + ' / ' + data.details, true);
+      });
+      Direct.hls.on(Hls.Events.MANIFEST_PARSED, function (ev, data) {
+        // обмежуємо якість до 720p — старому TV так легше
+        var best = -1, bestH = 0;
+        (data.levels || []).forEach(function (l, i) { if (l.height && l.height <= 720 && l.height > bestH) { bestH = l.height; best = i; } });
+        if (best >= 0) { Direct.hls.startLevel = best; Direct.hls.autoLevelCapping = best; }
+        Diag.set('Відео: запускаю' + (bestH ? ' ' + bestH + 'p' : '') + '…');
+        var pr = v.play();
+        if (pr && pr.catch) pr.catch(function () { Diag.set('Відео готове — натисни OK (клік) по відео, щоб запустити.', true); });
+      });
+      v.onerror = function () { Diag.set('Відео: помилка плеєра (код ' + (v.error ? v.error.code : '?') + ').', true); };
+      Direct.hls.loadSource(url); Direct.hls.attachMedia(v);
+    });
   },
 
   loadHls: function (cb) {
@@ -445,7 +464,7 @@ var Chat = {
   connect: function (channel) {
     Chat.disconnect();
     Chat.channel = channel; Chat.roomId = null; Chat.emotes = {};
-    $('chat-channel').textContent = channel; $('chat-log').innerHTML = '';
+    $('chat-channel').textContent = channel + '  ·  ' + $('ver').textContent; $('chat-log').innerHTML = '';
     Chat.status('з’єднання…');
     var ws;
     try { ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443'); } catch (e) { Chat.status('WebSocket недоступний'); return; }
