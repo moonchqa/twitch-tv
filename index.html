@@ -100,6 +100,12 @@
   .msg.action .t { font-style: italic; }
   .msg img.e { height: 36px; width: auto; vertical-align: middle; margin: -6px 1px 0; }
   .msg.sys { color: var(--muted); font-size: 22px; }
+  #diag {
+    position: absolute; left: 32px; bottom: 24px; max-width: 1100px; padding: 14px 20px;
+    border-radius: 10px; background: rgba(20,16,31,0.88); color: var(--muted); font-size: 22px;
+    white-space: pre-wrap;
+  }
+  #diag.err { color: #ffb0bd; }
 </style>
 </head>
 <body>
@@ -113,7 +119,7 @@
       <span>▲ ▼ — по списку</span>
       <span>► — кнопка видалення каналу</span>
       <span>OK — відкрити</span>
-      <span>На плеєрі: ◄ ► — чат, «Назад» — до списку</span>
+      <span>На плеєрі: ◄ ► — чат, OK або «Назад» — до списку</span>
     </div>
   </div>
   <div id="list-main">
@@ -131,6 +137,7 @@
   <div id="player">
     <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
     <div id="player-title"></div>
+    <div id="diag" hidden></div>
   </div>
   <div id="chat">
     <div id="chat-head"><b id="chat-channel"></b><span id="chat-status">…</span></div>
@@ -158,6 +165,11 @@ var CONFIG = {
    Утиліти
    ==================================================================== */
 var $ = function (id) { return document.getElementById(id); };
+var Diag = {
+  set: function (text, err) { var d = $('diag'); d.hidden = !text; d.textContent = text || ''; d.classList.toggle('err', !!err); },
+  timer: null
+};
+window.onerror = function (msg, src, line) { Diag.set('Помилка скрипта: ' + msg + ' (рядок ' + line + ')', true); };
 var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, ENTER: 13, BACK: 10009, EXIT: 10182, ESC: 27, BACKSPACE: 8 };
 
 function loadSaved() {
@@ -183,7 +195,7 @@ var List = {
   items: [],      // DOM-елементи .ch + add-row
   idx: 0,         // фокус по вертикалі
   onDel: false,   // фокус на кнопці видалення
-  timer: null,
+  timer: null, lock: 0,
 
   render: function () {
     var ul = $('channels'); ul.innerHTML = '';
@@ -236,7 +248,8 @@ var List = {
   key: function (code) {
     var cur = List.items[List.idx];
     var inInput = cur && cur.id === 'add-row';
-    if (inInput && code === KEY.ENTER) { List.add(); return true; }
+    if (inInput && code === KEY.ENTER) { List.add(); List.lock = Date.now(); return true; }
+    if (code === KEY.ENTER && List.lock && Date.now() - List.lock < 800) return true; // другий Enter від TV-клавіатури
     if (inInput && (code === KEY.LEFT || code === KEY.RIGHT || code === KEY.BACKSPACE)) return false; // хай працює курсор
     if (code === KEY.UP)   { List.idx = Math.max(0, List.idx - 1); List.onDel = false; List.paint(); return true; }
     if (code === KEY.DOWN) { List.idx = Math.min(List.items.length - 1, List.idx + 1); List.onDel = false; List.paint(); return true; }
@@ -288,9 +301,21 @@ var Player = {
       '&parent=' + encodeURIComponent(parent) + '&autoplay=true&muted=false';
     $('player-title').textContent = name;
     Player.flashTitle();
+    Diag.set('Плеєр: завантажую… (Enter — назад до списку)');
+    clearTimeout(Diag.timer);
+    Diag.timer = setTimeout(function () {
+      Diag.set('Плеєр не відповів за 20 с — ймовірно, вбудований плеєр Twitch не працює на цьому браузері. Enter — назад.', true);
+    }, 20000);
+    $('player-frame').onload = function () {
+      clearTimeout(Diag.timer);
+      Diag.set('Плеєр: сторінка завантажилась. Якщо чорно — дивись, чи є помилка в самому плеєрі. Enter — назад.');
+      setTimeout(function () { Diag.set(''); }, 8000);
+    };
     Chat.connect(name);
   },
   close: function () {
+    clearTimeout(Diag.timer); Diag.set('');
+    $('player-frame').onload = null;
     $('player-frame').src = 'about:blank';
     Chat.disconnect();
     List.show();
@@ -301,9 +326,9 @@ var Player = {
     Player.titleTimer = setTimeout(function () { t.classList.remove('show'); }, 2500);
   },
   key: function (code) {
-    if (code === KEY.BACK || code === KEY.ESC) { Player.close(); return true; }
+    if (code === KEY.BACK || code === KEY.ESC || code === KEY.ENTER) { Player.close(); return true; }
     if (code === KEY.LEFT || code === KEY.RIGHT) { $('chat').classList.toggle('hidden'); Player.flashTitle(); return true; }
-    if (code === KEY.UP || code === KEY.DOWN || code === KEY.ENTER) { Player.flashTitle(); return true; }
+    if (code === KEY.UP || code === KEY.DOWN) { Player.flashTitle(); return true; }
     return false;
   }
 };
@@ -344,7 +369,7 @@ var Chat = {
       Chat.status('перепідключення…');
       setTimeout(function () { if (Chat.ws === ws) Chat.connect(channel); }, 3000);
     };
-    ws.onerror = function () { Chat.status('помилка з’єднання'); };
+    ws.onerror = function () { Chat.status('помилка з’єднання'); Diag.set('Чат: WebSocket до Twitch не відкрився.', true); };
     Chat.loadGlobalEmotes();
   },
   disconnect: function () {
