@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920, height=1080, initial-scale=1">
+<title>Twitch + 7TV</title>
+<style>
+  :root {
+    --bg: #14101f;
+    --panel: #1c1728;
+    --panel-2: #241e33;
+    --text: #f1ecf7;
+    --muted: #9a90ab;
+    --focus: #f2b544;
+    --live: #e63b5a;
+    --chat-w: 460px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "Samsung Sans", "Noto Sans", "Segoe UI", Arial, sans-serif;
+    font-size: 26px; line-height: 1.35;
+  }
+  [hidden] { display: none !important; }
+  img { max-width: 100%; }
+
+  /* ---------- Channel list screen ---------- */
+  #screen-list { display: flex; height: 100%; }
+  #list-side {
+    width: 560px; padding: 72px 64px; display: flex; flex-direction: column;
+    border-right: 1px solid #2a2338;
+  }
+  #list-side h1 { font-size: 56px; font-weight: 700; letter-spacing: -0.5px; }
+  #list-side p { color: var(--muted); margin-top: 16px; font-size: 24px; }
+  #hint { margin-top: auto; color: var(--muted); font-size: 22px; }
+  #hint span { display: block; margin-top: 8px; }
+  #list-main { flex: 1; padding: 72px 64px; overflow: hidden; }
+  #channels { list-style: none; }
+  .ch {
+    display: flex; align-items: center; height: 148px; margin-bottom: 18px;
+    border-radius: 14px; background: var(--panel); padding-right: 16px;
+    border: 4px solid transparent;
+  }
+  .ch.focus { border-color: var(--focus); background: var(--panel-2); }
+  .ch .thumb {
+    width: 236px; height: 132px; border-radius: 10px 0 0 10px; overflow: hidden;
+    margin: 2px 0 2px 2px; background: #000; flex: none;
+  }
+  .ch .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ch .info { flex: 1; padding: 0 32px; }
+  .ch .name { font-size: 34px; font-weight: 600; }
+  .ch .sub { color: var(--muted); font-size: 22px; margin-top: 4px; }
+  .ch .del {
+    width: 72px; height: 72px; border-radius: 10px; background: #2a2338;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 30px; border: 4px solid transparent; flex: none;
+  }
+  .ch .del.focus { border-color: var(--focus); color: var(--text); }
+  #add-row {
+    display: flex; align-items: center; height: 96px; border-radius: 14px;
+    border: 4px dashed #3a3150; padding: 0 28px; color: var(--muted);
+  }
+  #add-row.focus { border-color: var(--focus); color: var(--text); }
+  #add-row input {
+    flex: 1; background: transparent; border: 0; outline: 0; color: var(--text);
+    font: inherit; font-size: 30px; margin-left: 20px;
+  }
+  #add-row input::placeholder { color: var(--muted); }
+  #empty { color: var(--muted); font-size: 28px; margin-bottom: 24px; }
+
+  /* ---------- Player screen ---------- */
+  #screen-player { display: flex; height: 100%; background: #000; }
+  #player { flex: 1; position: relative; background: #000; }
+  #player iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+  #player-title {
+    position: absolute; left: 32px; top: 24px; padding: 10px 20px; border-radius: 10px;
+    background: rgba(20,16,31,0.82); font-size: 28px; font-weight: 600;
+    opacity: 0; transition: opacity .25s;
+  }
+  #player-title.show { opacity: 1; }
+  #chat {
+    width: var(--chat-w); flex: none; background: var(--panel);
+    display: flex; flex-direction: column; border-left: 1px solid #2a2338;
+  }
+  #chat.hidden { display: none; }
+  #chat-head {
+    padding: 20px 24px; font-size: 24px; color: var(--muted);
+    border-bottom: 1px solid #2a2338; display: flex; justify-content: space-between;
+  }
+  #chat-head b { color: var(--text); font-weight: 600; }
+  #chat-status { font-size: 20px; }
+  #chat-log {
+    flex: 1; overflow: hidden; padding: 12px 20px 16px;
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .msg { font-size: 25px; line-height: 36px; margin-top: 8px; word-break: break-word; }
+  .msg .u { font-weight: 700; }
+  .msg .u:after { content: ":"; color: var(--muted); font-weight: 400; margin-right: 6px; }
+  .msg.action .t { font-style: italic; }
+  .msg img.e { height: 36px; width: auto; vertical-align: middle; margin: -6px 1px 0; }
+  .msg.sys { color: var(--muted); font-size: 22px; }
+</style>
+</head>
+<body>
+
+<!-- ============ Channel list ============ -->
+<div id="screen-list">
+  <div id="list-side">
+    <h1>Twitch<br>з 7TV-емодзі</h1>
+    <p>Обери канал. Прев'ю оновлюються кожну хвилину — якщо на картинці заставка «offline», стрім зараз не йде.</p>
+    <div id="hint">
+      <span>▲ ▼ — по списку</span>
+      <span>► — кнопка видалення каналу</span>
+      <span>OK — відкрити</span>
+      <span>На плеєрі: ◄ ► — чат, «Назад» — до списку</span>
+    </div>
+  </div>
+  <div id="list-main">
+    <div id="empty" hidden>Список порожній. Додай перший канал нижче.</div>
+    <ul id="channels"></ul>
+    <div id="add-row">
+      <span>＋</span>
+      <input id="add-input" type="text" placeholder="Додати канал (назва з адреси twitch.tv/…)" autocomplete="off">
+    </div>
+  </div>
+</div>
+
+<!-- ============ Player ============ -->
+<div id="screen-player" hidden>
+  <div id="player">
+    <iframe id="player-frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
+    <div id="player-title"></div>
+  </div>
+  <div id="chat">
+    <div id="chat-head"><b id="chat-channel"></b><span id="chat-status">…</span></div>
+    <div id="chat-log"></div>
+  </div>
+</div>
+
+<script>
+/* ====================================================================
+   Налаштування — тут можна міняти без розуміння решти коду
+   ==================================================================== */
+var CONFIG = {
+  // Канали за замовчуванням. Додані з телевізора зберігаються окремо
+  // в пам'яті браузера і дописуються до цього списку.
+  channels: ['twitch', 'esl_csgo'],
+  // Сторонні емодзі. Вимкни будь-який, якщо не потрібен.
+  providers: { seventv: true, bttv: true, ffz: true },
+  // Скільки останніх повідомлень тримати в чаті (більше = повільніше на TV).
+  maxMessages: 60,
+  // Якість картинок емодзі: 1 або 2 (2 = чіткіше, трохи важче).
+  emoteScale: 2
+};
+
+/* ====================================================================
+   Утиліти
+   ==================================================================== */
+var $ = function (id) { return document.getElementById(id); };
+var KEY = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, ENTER: 13, BACK: 10009, EXIT: 10182, ESC: 27, BACKSPACE: 8 };
+
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem('channels') || '[]'); } catch (e) { return []; }
+}
+function saveSaved(list) {
+  try { localStorage.setItem('channels', JSON.stringify(list)); } catch (e) {}
+}
+function allChannels() {
+  var seen = {}, out = [];
+  CONFIG.channels.concat(loadSaved()).forEach(function (c) {
+    c = String(c || '').toLowerCase().trim();
+    if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+  });
+  return out;
+}
+function isDefault(name) { return CONFIG.channels.indexOf(name) !== -1; }
+
+/* ====================================================================
+   Екран списку
+   ==================================================================== */
+var List = {
+  items: [],      // DOM-елементи .ch + add-row
+  idx: 0,         // фокус по вертикалі
+  onDel: false,   // фокус на кнопці видалення
+  timer: null,
+
+  render: function () {
+    var ul = $('channels'); ul.innerHTML = '';
+    var chans = allChannels();
+    $('empty').hidden = chans.length > 0;
+    chans.forEach(function (name) {
+      var li = document.createElement('li'); li.className = 'ch'; li.dataset.name = name;
+      var thumb = document.createElement('div'); thumb.className = 'thumb';
+      var img = document.createElement('img'); img.alt = '';
+      img.src = List.thumbUrl(name); thumb.appendChild(img);
+      var info = document.createElement('div'); info.className = 'info';
+      var n = document.createElement('div'); n.className = 'name'; n.textContent = name;
+      var s = document.createElement('div'); s.className = 'sub'; s.textContent = 'twitch.tv/' + name;
+      info.appendChild(n); info.appendChild(s);
+      li.appendChild(thumb); li.appendChild(info);
+      if (!isDefault(name)) {
+        var del = document.createElement('div'); del.className = 'del'; del.textContent = '✕';
+        li.appendChild(del);
+      }
+      ul.appendChild(li);
+    });
+    List.items = Array.prototype.slice.call(ul.children).concat([$('add-row')]);
+    if (List.idx >= List.items.length) List.idx = List.items.length - 1;
+    List.onDel = false;
+    List.paint();
+  },
+
+  thumbUrl: function (name) {
+    return 'https://static-cdn.jtvnw.net/previews-ttv/live_user_' + name + '-440x248.jpg?t=' + Math.floor(Date.now() / 60000);
+  },
+  refreshThumbs: function () {
+    Array.prototype.forEach.call(document.querySelectorAll('#channels img'), function (img) {
+      var name = img.parentNode.parentNode.dataset.name;
+      img.src = List.thumbUrl(name);
+    });
+  },
+
+  paint: function () {
+    List.items.forEach(function (el, i) {
+      el.classList.toggle('focus', i === List.idx && !List.onDel);
+      var del = el.querySelector && el.querySelector('.del');
+      if (del) del.classList.toggle('focus', i === List.idx && List.onDel);
+    });
+    var cur = List.items[List.idx];
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+    // Фокус на полі вводу тільки коли на ньому стоїмо, інакше TV-клавіатура лізе сама
+    if (cur && cur.id === 'add-row') $('add-input').focus(); else $('add-input').blur();
+  },
+
+  key: function (code) {
+    var cur = List.items[List.idx];
+    var inInput = cur && cur.id === 'add-row';
+    if (inInput && code === KEY.ENTER) { List.add(); return true; }
+    if (inInput && (code === KEY.LEFT || code === KEY.RIGHT || code === KEY.BACKSPACE)) return false; // хай працює курсор
+    if (code === KEY.UP)   { List.idx = Math.max(0, List.idx - 1); List.onDel = false; List.paint(); return true; }
+    if (code === KEY.DOWN) { List.idx = Math.min(List.items.length - 1, List.idx + 1); List.onDel = false; List.paint(); return true; }
+    if (code === KEY.RIGHT && cur && cur.querySelector('.del')) { List.onDel = true; List.paint(); return true; }
+    if (code === KEY.LEFT)  { List.onDel = false; List.paint(); return true; }
+    if (code === KEY.ENTER && cur && cur.dataset.name) {
+      if (List.onDel) List.remove(cur.dataset.name); else Player.open(cur.dataset.name);
+      return true;
+    }
+    return false;
+  },
+
+  add: function () {
+    var inp = $('add-input');
+    var name = inp.value.toLowerCase().replace(/^.*twitch\.tv\//, '').replace(/[^a-z0-9_]/g, '');
+    if (!name) return;
+    var saved = loadSaved();
+    if (allChannels().indexOf(name) === -1) { saved.push(name); saveSaved(saved); }
+    inp.value = ''; inp.blur();
+    List.render();
+    List.idx = List.items.length - 2; List.paint();
+  },
+  remove: function (name) {
+    saveSaved(loadSaved().filter(function (c) { return c !== name; }));
+    List.render();
+  },
+
+  show: function () {
+    $('screen-player').hidden = true; $('screen-list').hidden = false;
+    List.render();
+    clearInterval(List.timer); List.timer = setInterval(List.refreshThumbs, 60000);
+  },
+  hide: function () { clearInterval(List.timer); $('add-input').blur(); $('screen-list').hidden = true; }
+};
+
+/* ====================================================================
+   Екран плеєра
+   ==================================================================== */
+var Player = {
+  channel: null, titleTimer: null,
+
+  open: function (name) {
+    Player.channel = name;
+    List.hide();
+    $('screen-player').hidden = false;
+    $('chat').classList.remove('hidden');
+    var parent = location.hostname || 'localhost';
+    $('player-frame').src = 'https://player.twitch.tv/?channel=' + encodeURIComponent(name) +
+      '&parent=' + encodeURIComponent(parent) + '&autoplay=true&muted=false';
+    $('player-title').textContent = name;
+    Player.flashTitle();
+    Chat.connect(name);
+  },
+  close: function () {
+    $('player-frame').src = 'about:blank';
+    Chat.disconnect();
+    List.show();
+  },
+  flashTitle: function () {
+    var t = $('player-title'); t.classList.add('show');
+    clearTimeout(Player.titleTimer);
+    Player.titleTimer = setTimeout(function () { t.classList.remove('show'); }, 2500);
+  },
+  key: function (code) {
+    if (code === KEY.BACK || code === KEY.ESC) { Player.close(); return true; }
+    if (code === KEY.LEFT || code === KEY.RIGHT) { $('chat').classList.toggle('hidden'); Player.flashTitle(); return true; }
+    if (code === KEY.UP || code === KEY.DOWN || code === KEY.ENTER) { Player.flashTitle(); return true; }
+    return false;
+  }
+};
+
+/* ====================================================================
+   Чат: Twitch IRC через WebSocket + сторонні емодзі
+   ==================================================================== */
+var Chat = {
+  ws: null, channel: null, roomId: null, emotes: {}, // name -> url
+  pending: [], flushTimer: null,
+
+  status: function (s) { $('chat-status').textContent = s; },
+  sys: function (text) {
+    var d = document.createElement('div'); d.className = 'msg sys'; d.textContent = text;
+    Chat.push(d);
+  },
+
+  connect: function (channel) {
+    Chat.disconnect();
+    Chat.channel = channel; Chat.roomId = null; Chat.emotes = {};
+    $('chat-channel').textContent = channel; $('chat-log').innerHTML = '';
+    Chat.status('з’єднання…');
+    var ws;
+    try { ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443'); } catch (e) { Chat.status('WebSocket недоступний'); return; }
+    Chat.ws = ws;
+    ws.onopen = function () {
+      ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+      ws.send('PASS SCHMOOPIIE');
+      ws.send('NICK justinfan' + Math.floor(10000 + Math.random() * 80000));
+      ws.send('JOIN #' + channel);
+      Chat.status('підключено');
+    };
+    ws.onmessage = function (ev) {
+      String(ev.data).split('\r\n').forEach(function (line) { if (line) Chat.line(line); });
+    };
+    ws.onclose = function () {
+      if (Chat.ws !== ws) return; // закрили самі
+      Chat.status('перепідключення…');
+      setTimeout(function () { if (Chat.ws === ws) Chat.connect(channel); }, 3000);
+    };
+    ws.onerror = function () { Chat.status('помилка з’єднання'); };
+    Chat.loadGlobalEmotes();
+  },
+  disconnect: function () {
+    var ws = Chat.ws; Chat.ws = null;
+    if (ws) { try { ws.close(); } catch (e) {} }
+  },
+
+  // ---- розбір IRC-рядка: @tags :prefix COMMAND params :trailing
+  line: function (raw) {
+    if (raw.indexOf('PING') === 0) { Chat.ws && Chat.ws.send('PONG :tmi.twitch.tv'); return; }
+    var tags = {}, rest = raw;
+    if (rest[0] === '@') {
+      var sp = rest.indexOf(' ');
+      rest.slice(1, sp).split(';').forEach(function (kv) {
+        var i = kv.indexOf('='); tags[kv.slice(0, i)] = kv.slice(i + 1);
+      });
+      rest = rest.slice(sp + 1);
+    }
+    if (rest[0] === ':') rest = rest.slice(rest.indexOf(' ') + 1);
+    var trailing = '';
+    var ti = rest.indexOf(' :');
+    if (ti !== -1) { trailing = rest.slice(ti + 2); rest = rest.slice(0, ti); }
+    var parts = rest.split(' ');
+    var cmd = parts[0];
+
+    if (cmd === 'ROOMSTATE' && tags['room-id'] && !Chat.roomId) {
+      Chat.roomId = tags['room-id'];
+      Chat.loadChannelEmotes(Chat.roomId);
+    } else if (cmd === 'PRIVMSG') {
+      Chat.message(tags, trailing);
+    } else if (cmd === 'NOTICE') {
+      Chat.sys(trailing);
+    } else if (cmd === 'CLEARCHAT' || cmd === 'CLEARMSG') {
+      // бан/видалення — для перегляду не критично, ігноруємо
+    }
+  },
+
+  message: function (tags, text) {
+    var action = false;
+    if (text.indexOf('\u0001ACTION ') === 0) { action = true; text = text.slice(8).replace(/\u0001$/, ''); }
+    var name = tags['display-name'] || tags['login'] || '?';
+    var color = tags['color'] || Chat.colorFor(name);
+
+    var el = document.createElement('div'); el.className = 'msg' + (action ? ' action' : '');
+    var u = document.createElement('span'); u.className = 'u'; u.style.color = color; u.textContent = name;
+    var t = document.createElement('span'); t.className = 't';
+    if (action) t.style.color = color;
+    el.appendChild(u); el.appendChild(t);
+    Chat.renderText(t, text, tags['emotes'] || '');
+    Chat.push(el);
+  },
+
+  // Twitch-емодзі приходять як діапазони в кодпоінтах: "id:start-end,start-end/id:..."
+  renderText: function (container, text, emotesTag) {
+    var cps = Array.from(text);          // масив символів по кодпоінтах
+    var marks = {};                       // start -> {end, url}
+    if (emotesTag) {
+      emotesTag.split('/').forEach(function (part) {
+        var i = part.indexOf(':'); if (i === -1) return;
+        var id = part.slice(0, i);
+        part.slice(i + 1).split(',').forEach(function (r) {
+          var se = r.split('-'); var s = +se[0], e = +se[1];
+          if (!isNaN(s) && !isNaN(e)) marks[s] = { end: e, url: 'https://static-cdn.jtvnw.net/emoticons/v2/' + id + '/default/dark/' + CONFIG.emoteScale + '.0' };
+        });
+      });
+    }
+    var buf = '';
+    var flush = function () { if (buf) { Chat.renderWords(container, buf); buf = ''; } };
+    for (var i = 0; i < cps.length; i++) {
+      if (marks[i]) {
+        flush();
+        container.appendChild(Chat.img(marks[i].url, cps.slice(i, marks[i].end + 1).join('')));
+        i = marks[i].end;
+      } else buf += cps[i];
+    }
+    flush();
+  },
+
+  // Сторонні емодзі: збіг по слову
+  renderWords: function (container, text) {
+    var words = text.split(' '), buf = '';
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i], url = Chat.emotes[w];
+      if (url) {
+        if (buf) { container.appendChild(document.createTextNode(buf)); buf = ''; }
+        container.appendChild(Chat.img(url, w));
+        buf = ' ';
+      } else {
+        buf += w + (i < words.length - 1 ? ' ' : '');
+      }
+    }
+    if (buf) container.appendChild(document.createTextNode(buf));
+  },
+
+  img: function (url, alt) {
+    var im = document.createElement('img'); im.className = 'e'; im.src = url; im.alt = alt; im.title = alt;
+    im.onerror = function () { var s = document.createElement('span'); s.textContent = alt; im.parentNode && im.parentNode.replaceChild(s, im); };
+    return im;
+  },
+
+  // Пакетне додавання, щоб телевізор не захлинався на активних чатах
+  push: function (el) {
+    Chat.pending.push(el);
+    if (!Chat.flushTimer) Chat.flushTimer = setTimeout(Chat.flush, 120);
+  },
+  flush: function () {
+    Chat.flushTimer = null;
+    var log = $('chat-log');
+    Chat.pending.forEach(function (el) { log.appendChild(el); });
+    Chat.pending = [];
+    while (log.children.length > CONFIG.maxMessages) log.removeChild(log.firstChild);
+  },
+
+  colorFor: function (name) {
+    var pal = ['#ff7f50', '#1e90ff', '#9acd32', '#ff69b4', '#b22222', '#00ced1', '#daa520', '#8a2be2', '#2e8b57', '#ff4500'];
+    var h = 0; for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+    return pal[Math.abs(h) % pal.length];
+  },
+
+  // ---- завантаження наборів емодзі
+  fetchJson: function (url) {
+    return fetch(url).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  },
+  addEmote: function (name, url) { if (name && url && !Chat.emotes[name]) Chat.emotes[name] = url; },
+
+  loadGlobalEmotes: function () {
+    var p = CONFIG.providers, sc = CONFIG.emoteScale;
+    if (p.seventv) Chat.fetchJson('https://7tv.io/v3/emote-sets/global').then(Chat.add7tvSet).catch(function () {});
+    if (p.bttv) Chat.fetchJson('https://api.betterttv.net/3/cached/emotes/global')
+      .then(function (list) { list.forEach(function (e) { Chat.addEmote(e.code, 'https://cdn.betterttv.net/emote/' + e.id + '/' + sc + 'x'); }); }).catch(function () {});
+    if (p.ffz) Chat.fetchJson('https://api.frankerfacez.com/v1/set/global').then(Chat.addFfzSets).catch(function () {});
+  },
+  loadChannelEmotes: function (id) {
+    var p = CONFIG.providers, sc = CONFIG.emoteScale, done = 0, total = 0;
+    var tick = function (ok) { done++; if (done === total) Chat.status('емодзі: ' + Object.keys(Chat.emotes).length); };
+    if (p.seventv) { total++;
+      Chat.fetchJson('https://7tv.io/v3/users/twitch/' + id)
+        .then(function (u) { Chat.add7tvSet(u.emote_set || {}); tick(); })
+        .catch(function () { tick(); });
+    }
+    if (p.bttv) { total++;
+      Chat.fetchJson('https://api.betterttv.net/3/cached/users/twitch/' + id)
+        .then(function (u) {
+          (u.channelEmotes || []).concat(u.sharedEmotes || []).forEach(function (e) {
+            Chat.addEmote(e.code, 'https://cdn.betterttv.net/emote/' + e.id + '/' + sc + 'x');
+          }); tick();
+        }).catch(function () { tick(); });
+    }
+    if (p.ffz) { total++;
+      Chat.fetchJson('https://api.frankerfacez.com/v1/room/id/' + id)
+        .then(function (r) { Chat.addFfzSets(r); tick(); }).catch(function () { tick(); });
+    }
+    if (!total) Chat.status('підключено');
+  },
+  add7tvSet: function (set) {
+    (set.emotes || []).forEach(function (e) {
+      var host = e.data && e.data.host; if (!host || !host.url) return;
+      var base = host.url.indexOf('//') === 0 ? 'https:' + host.url : host.url;
+      // webp — Chromium на Tizen 5 його розуміє; якщо раптом ні, зміни на .png нижче
+      Chat.addEmote(e.name, base + '/' + CONFIG.emoteScale + 'x.webp');
+    });
+  },
+  addFfzSets: function (r) {
+    var sets = r.sets || {};
+    Object.keys(sets).forEach(function (k) {
+      (sets[k].emoticons || []).forEach(function (e) {
+        var u = e.urls && (e.urls[String(CONFIG.emoteScale)] || e.urls['1']); if (!u) return;
+        if (u.indexOf('//') === 0) u = 'https:' + u;
+        Chat.addEmote(e.name, u);
+      });
+    });
+  }
+};
+
+/* ====================================================================
+   Клавіші пульта
+   ==================================================================== */
+document.addEventListener('keydown', function (ev) {
+  var code = ev.keyCode;
+  var handled = $('screen-player').hidden ? List.key(code) : Player.key(code);
+  if (handled) ev.preventDefault();
+});
+
+List.show();
+</script>
+</body>
+</html>
